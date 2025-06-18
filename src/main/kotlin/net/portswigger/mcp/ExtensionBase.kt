@@ -7,6 +7,7 @@ import net.portswigger.mcp.config.McpConfig
 import net.portswigger.mcp.providers.ClaudeDesktopProvider
 import net.portswigger.mcp.providers.ManualProxyInstallerProvider
 import net.portswigger.mcp.providers.ProxyJarManager
+import net.portswigger.mcp.security.AuthConfig
 
 @Suppress("unused")
 class ExtensionBase : BurpExtension {
@@ -15,12 +16,13 @@ class ExtensionBase : BurpExtension {
         api.extension().setName("Burp MCP Server")
 
         val config = McpConfig(api.persistence().extensionData(), api.logging())
-        val serverManager = KtorServerManager(api)
+        val authConfig = AuthConfig(api.persistence().extensionData(), api.logging())
+        val serverManager = KtorServerManager(api, authConfig)
 
         val proxyJarManager = ProxyJarManager(api.logging())
 
         val configUi = ConfigUi(
-            config = config, providers = listOf(
+            config = config, authConfig = authConfig, providers = listOf(
                 ClaudeDesktopProvider(api.logging(), proxyJarManager),
                 ManualProxyInstallerProvider(api.logging(), proxyJarManager),
             )

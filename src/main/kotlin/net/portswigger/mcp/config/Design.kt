@@ -173,6 +173,25 @@ object Design {
             }
         }
     }
+
+    fun createSubsectionLabel(text: String): JLabel {
+        return object : JLabel(text) {
+            init {
+                updateColors()
+                alignmentX = LEFT_ALIGNMENT
+            }
+
+            override fun updateUI() {
+                super.updateUI()
+                updateColors()
+            }
+
+            private fun updateColors() {
+                font = Typography.labelLarge
+                foreground = Colors.onSurface
+            }
+        }
+    }
 }
 
 class ToggleSwitch(private var isOn: Boolean, private val onToggle: (Boolean) -> Unit) : JComponent() {

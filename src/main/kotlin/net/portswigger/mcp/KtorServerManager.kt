@@ -8,19 +8,23 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import io.ktor.server.routing.*
 import io.modelcontextprotocol.kotlin.sdk.Implementation
 import io.modelcontextprotocol.kotlin.sdk.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
 import net.portswigger.mcp.config.McpConfig
+import net.portswigger.mcp.security.AuthConfig
+import net.portswigger.mcp.security.AuthMiddleware
+import net.portswigger.mcp.security.handleTokenRequest
 import net.portswigger.mcp.tools.registerTools
 import java.net.URI
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class KtorServerManager(private val api: MontoyaApi) : ServerManager {
+class KtorServerManager(private val api: MontoyaApi, private val authConfig: AuthConfig) : ServerManager {
 
     private var server: EmbeddedServer<*, *>? = null
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -32,6 +36,8 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
             try {
                 server?.stop(1000, 5000)
                 server = null
+
+                authConfig.authenticationEnabled = config.authenticationEnabled
 
                 val mcpServer = Server(
                     serverInfo = Implementation("burp-suite", "1.1.0"), options = ServerOptions(
@@ -51,11 +57,20 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
 
                         allowHeader(HttpHeaders.ContentType)
                         allowHeader(HttpHeaders.Accept)
+                        allowHeader(HttpHeaders.Authorization)
                         allowHeader("Last-Event-ID")
+                        allowHeader("X-API-Key")
+                        allowHeader("X-Client-ID")
+                        allowHeader("X-Client-Secret")
 
                         allowCredentials = false
                         allowNonSimpleContentTypes = true
                         maxAgeInSeconds = 3600
+                    }
+
+                    val authMiddleware = AuthMiddleware(authConfig, api.logging())
+                    intercept(ApplicationCallPipeline.Call) {
+                        authMiddleware.intercept(call) { proceed() }
                     }
 
                     intercept(ApplicationCallPipeline.Call) {
@@ -90,6 +105,12 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
                         call.response.header("X-Content-Type-Options", "nosniff")
                         call.response.header("Referrer-Policy", "same-origin")
                         call.response.header("Content-Security-Policy", "default-src 'none'")
+                    }
+
+                    routing {
+                        post("/auth/token") {
+                            handleTokenRequest(call, authConfig, api.logging())
+                        }
                     }
 
                     mcp {

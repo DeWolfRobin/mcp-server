@@ -8,14 +8,20 @@ import net.portswigger.mcp.ServerState
 import net.portswigger.mcp.Swing
 import net.portswigger.mcp.config.components.*
 import net.portswigger.mcp.providers.Provider
+import net.portswigger.mcp.security.AuthConfig
 import java.awt.BorderLayout
 import java.awt.Component.CENTER_ALIGNMENT
+import java.awt.FlowLayout
 import java.awt.GridBagLayout
 import javax.swing.*
 import javax.swing.Box.*
 import javax.swing.JOptionPane.ERROR_MESSAGE
 
-class ConfigUi(private val config: McpConfig, private val providers: List<Provider>) {
+class ConfigUi(
+    private val config: McpConfig,
+    private val authConfig: AuthConfig,
+    private val providers: List<Provider>
+) {
 
     private val panel = JPanel(BorderLayout())
     val component: JComponent get() = panel
@@ -48,6 +54,7 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
     private lateinit var serverConfigurationPanel: ServerConfigurationPanel
     private lateinit var advancedOptionsPanel: AdvancedOptionsPanel
     private lateinit var autoApproveTargetsPanel: AutoApproveTargetsPanel
+    private lateinit var authenticationButton: JButton
     private lateinit var installationPanel: InstallationPanel
 
     private var toggleListener: ((Boolean) -> Unit)? = null
@@ -73,8 +80,19 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
 
         autoApproveTargetsPanel = AutoApproveTargetsPanel(config = config)
 
+        authenticationButton = Design.createFilledButton("Manage Authentication").apply {
+            addActionListener {
+                val dialog = AuthenticationDialog(panel, authConfig)
+                dialog.showDialog()
+            }
+        }
+
         installationPanel = InstallationPanel(
-            config = config, providers = providers, reinstallNotice = reinstallNotice, parentComponent = panel
+            config = config,
+            providers = providers,
+            reinstallNotice = reinstallNotice,
+            parentComponent = panel,
+            authConfig = authConfig
         )
 
         setupConfigListeners()
@@ -198,6 +216,59 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
         rightPanelContent.add(createVerticalStrut(Design.Spacing.LG))
 
         rightPanelContent.add(autoApproveTargetsPanel)
+
+        rightPanelContent.add(createVerticalStrut(Design.Spacing.LG))
+
+        val authSection = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            background = Design.Colors.surface
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Design.Colors.outlineVariant, 1),
+                BorderFactory.createEmptyBorder(
+                    Design.Spacing.MD,
+                    Design.Spacing.MD,
+                    Design.Spacing.MD,
+                    Design.Spacing.MD
+                )
+            )
+            alignmentX = LEFT_ALIGNMENT
+        }
+
+        val authLabel = Design.createSectionLabel("Authentication").apply {
+            alignmentX = LEFT_ALIGNMENT
+        }
+        authSection.add(authLabel)
+        authSection.add(createVerticalStrut(Design.Spacing.MD))
+
+        val authEnabledPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4)).apply {
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
+        }
+        authEnabledPanel.add(JLabel("Authentication enabled").apply {
+            font = Design.Typography.bodyLarge
+            foreground = Design.Colors.onSurface
+        })
+        authEnabledPanel.add(createHorizontalStrut(Design.Spacing.MD))
+
+        val authToggle = Design.createToggleSwitch(config.authenticationEnabled) { enabled ->
+            config.authenticationEnabled = enabled
+        }
+        authEnabledPanel.add(authToggle)
+        authSection.add(authEnabledPanel)
+        authSection.add(createVerticalStrut(Design.Spacing.MD))
+
+        val authDescription = JLabel("Require client credentials and access tokens for MCP connections.").apply {
+            font = Design.Typography.bodyMedium
+            foreground = Design.Colors.onSurfaceVariant
+            alignmentX = LEFT_ALIGNMENT
+        }
+        authSection.add(authDescription)
+        authSection.add(createVerticalStrut(Design.Spacing.MD))
+
+        authenticationButton.alignmentX = LEFT_ALIGNMENT
+        authSection.add(authenticationButton)
+
+        rightPanelContent.add(authSection)
 
         rightPanelContent.add(createVerticalStrut(15))
         rightPanelContent.add(advancedOptionsPanel)

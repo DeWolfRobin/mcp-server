@@ -3,6 +3,7 @@ package net.portswigger.mcp.providers
 import burp.api.montoya.logging.Logging
 import kotlinx.serialization.json.*
 import net.portswigger.mcp.config.McpConfig
+import net.portswigger.mcp.security.AuthConfig
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -16,7 +17,7 @@ interface Provider {
     val name: String
     val installButtonText: String
     val confirmationText: String?
-    fun install(config: McpConfig): String?
+    fun install(config: McpConfig, authConfig: AuthConfig? = null): String?
 }
 
 class ClaudeDesktopProvider(private val logging: Logging, private val proxyJarManager: ProxyJarManager) : Provider {
@@ -29,7 +30,7 @@ class ClaudeDesktopProvider(private val logging: Logging, private val proxyJarMa
     override val confirmationText =
         "Install to $name?\nThis will create an entry within $name's MCP configuration file ($claudeConfigFileName)"
 
-    override fun install(config: McpConfig): String {
+    override fun install(config: McpConfig, authConfig: AuthConfig?): String {
         val proxyJarFile = proxyJarManager.getProxyJar()
 
         val path = configFilePath() ?: error("Could not find Claude config path")
@@ -39,6 +40,11 @@ class ClaudeDesktopProvider(private val logging: Logging, private val proxyJarMa
         logging.logToOutput("Using Java from: $javaPath")
 
         val sseUrl = "http://${config.host}:${config.port}"
+
+        val clientCredentials = if (config.authenticationEnabled && authConfig != null) {
+            authConfig.generateClientCredentials("Claude Desktop")
+        } else null
+        
         val burpServerConfig = buildJsonObject {
             put("command", JsonPrimitive(javaPath))
             put("args", buildJsonArray {
@@ -46,6 +52,13 @@ class ClaudeDesktopProvider(private val logging: Logging, private val proxyJarMa
                 add(JsonPrimitive(proxyJarFile.toString()))
                 add(JsonPrimitive("--sse-url"))
                 add(JsonPrimitive(sseUrl))
+
+                clientCredentials?.let { creds ->
+                    add(JsonPrimitive("--client-id"))
+                    add(JsonPrimitive(creds.clientId))
+                    add(JsonPrimitive("--client-secret"))
+                    add(JsonPrimitive(creds.clientSecret))
+                }
             })
         }
 
@@ -61,7 +74,17 @@ class ClaudeDesktopProvider(private val logging: Logging, private val proxyJarMa
 
         logging.logToOutput("Installed Burp MCP Server to Claude Desktop config")
 
-        return "Installation successful. Please restart $name if it is currently running."
+        if (clientCredentials != null) {
+            logging.logToOutput("Generated authentication credentials for Claude Desktop:")
+            logging.logToOutput("  Client ID: ${clientCredentials.clientId}")
+            logging.logToOutput("  Client Secret: ${clientCredentials.clientSecret}")
+        }
+
+        return if (clientCredentials != null) {
+            "Installation successful with authentication enabled.\nClient credentials have been automatically configured.\nPlease restart $name if it is currently running."
+        } else {
+            "Installation successful. Please restart $name if it is currently running."
+        }
     }
 
     private fun configFilePath(): Path? {
@@ -123,7 +146,7 @@ class ManualProxyInstallerProvider(private val logging: Logging, private val pro
     override val installButtonText = "Extract server proxy jar"
     override val confirmationText = null
 
-    override fun install(config: McpConfig): String? {
+    override fun install(config: McpConfig, authConfig: AuthConfig?): String? {
         val proxyJarFile = proxyJarManager.getProxyJar()
 
         val fileChooser = JFileChooser().apply {

@@ -29,6 +29,7 @@ import net.portswigger.mcp.TestSseMcpClient
 import net.portswigger.mcp.config.McpConfig
 import net.portswigger.mcp.schema.HttpRequestResponse
 import net.portswigger.mcp.schema.toSerializableForm
+import net.portswigger.mcp.security.AuthConfig
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -41,7 +42,8 @@ class ToolsKtTest {
     
     private val client = TestSseMcpClient()
     private val api = mockk<MontoyaApi>(relaxed = true)
-    private val serverManager = KtorServerManager(api)
+    private var authConfig: AuthConfig
+    private var serverManager: KtorServerManager
     private val testPort = findAvailablePort()
     private var serverStarted = false
     private val config: McpConfig
@@ -56,6 +58,7 @@ class ToolsKtTest {
             every { getBoolean("requireHistoryAccessApproval") } returns false
             every { getBoolean("_alwaysAllowHttpHistory") } returns false
             every { getBoolean("_alwaysAllowWebSocketHistory") } returns false
+            every { getBoolean("authenticationEnabled") } returns false
             every { getString("host") } returns "127.0.0.1"
             every { getString("autoApproveTargets") } returns ""
             every { getInteger("port") } returns testPort
@@ -69,6 +72,23 @@ class ToolsKtTest {
         }
 
         config = McpConfig(persistedObject, mockLogging)
+
+        // Create real AuthConfig with mocked storage for testing
+        val authPersistenceObject = mockk<PersistedObject>().apply {
+            every { getBoolean("authenticationEnabled") } returns false
+            every { getInteger("maxTokensPerClient") } returns 10
+            every { getInteger("tokenExpiryHours") } returns 168 // 7 days
+            every { getString("_clientCredentialsJson") } returns "{}"
+            every { getString("_activeTokensJson") } returns "{}"
+            every { getString("_encryptedSecretKey") } returns ""
+            every { getString("_keySalt") } returns ""
+            every { getString("_keyDerivationSeed") } returns ""
+            every { setBoolean(any(), any()) } returns Unit
+            every { setString(any(), any()) } returns Unit
+            every { setInteger(any(), any()) } returns Unit
+        }
+        authConfig = AuthConfig(authPersistenceObject, mockLogging)
+        serverManager = KtorServerManager(api, authConfig)
         
         mockkStatic(HttpHeader::class)
         mockkStatic(burp.api.montoya.http.HttpService::class)

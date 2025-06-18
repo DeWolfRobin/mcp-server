@@ -9,6 +9,7 @@ import net.portswigger.mcp.config.Design
 import net.portswigger.mcp.config.Dialogs
 import net.portswigger.mcp.config.McpConfig
 import net.portswigger.mcp.providers.Provider
+import net.portswigger.mcp.security.AuthConfig
 import java.awt.FlowLayout
 import javax.swing.*
 import javax.swing.Box.createVerticalStrut
@@ -19,7 +20,8 @@ class InstallationPanel(
     private val config: McpConfig,
     private val providers: List<Provider>,
     private val reinstallNotice: WarningLabel,
-    private val parentComponent: JComponent
+    private val parentComponent: JComponent,
+    private val authConfig: AuthConfig? = null
 ) : JPanel() {
 
     init {
@@ -99,7 +101,7 @@ class InstallationPanel(
 
         thread {
             try {
-                val result = provider.install(config)
+                val result = provider.install(config, authConfig)
                 CoroutineScope(Dispatchers.Swing).launch {
                     reinstallNotice.isVisible = false
 

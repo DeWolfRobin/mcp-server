@@ -77,6 +77,7 @@ class ServerConfigurationPanel(
             config.requireHistoryAccessApproval
         ) { config.alwaysAllowWebSocketHistory = it }
         add(alwaysAllowWebSocketHistoryCheckBox)
+        add(createVerticalStrut(Design.Spacing.MD))
 
         add(validationErrorLabel)
     }
