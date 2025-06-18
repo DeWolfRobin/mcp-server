@@ -62,16 +62,30 @@ class AuthConfig(storage: PersistedObject, private val logging: Logging) {
     private var _encryptedSecretKey by storage.string("")
     private var _keySalt by storage.string("")
     private var _keyDerivationSeed by storage.string("")
+    private var _masterKeyDerivationKey by storage.string("")  // SECURITY FIX: Secure master key for derivation
 
     private val secureRandom = SecureRandom()
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
+        if (_masterKeyDerivationKey.isEmpty()) {
+            generateSecureMasterKeyDerivationKey()
+        }
+        
         if (_encryptedSecretKey.isEmpty() || _keySalt.isEmpty() || _keyDerivationSeed.isEmpty()) {
             generateAndStoreSecretKey()
         }
 
         cleanupExpiredTokens()
+    }
+
+    private fun generateSecureMasterKeyDerivationKey() {
+        val masterKeyBytes = ByteArray(64)
+        secureRandom.nextBytes(masterKeyBytes)
+
+        _masterKeyDerivationKey = Base64.getEncoder().encodeToString(masterKeyBytes)
+
+        logging.logToOutput("Generated secure master key derivation key")
     }
 
     private fun generateAndStoreSecretKey() {
@@ -92,8 +106,22 @@ class AuthConfig(storage: PersistedObject, private val logging: Logging) {
         logging.logToOutput("Generated and encrypted new master secret key")
     }
 
+    private fun generateSecureKeyDerivationPassword(seed: String): String {
+        val masterKeyBytes = Base64.getDecoder().decode(_masterKeyDerivationKey)
+        val applicationSalt = "mcp-auth-secure-kdf-v2"
+
+        val hmac = Mac.getInstance("HmacSHA256")
+        val keySpec = SecretKeySpec(masterKeyBytes, "HmacSHA256")
+        hmac.init(keySpec)
+
+        val keyMaterial = "${applicationSalt}:${seed}".toByteArray()
+        val derivedKey = hmac.doFinal(keyMaterial)
+
+        return Base64.getEncoder().encodeToString(derivedKey)
+    }
+
     private fun encryptSecretKey(keyBytes: ByteArray, salt: ByteArray, seed: String): ByteArray {
-        val password = "mcp-auth-key-${System.getProperty("user.name")}-$seed".toCharArray()
+        val password = generateSecureKeyDerivationPassword(seed).toCharArray()
 
         val spec = PBEKeySpec(password, salt, PBKDF2_ITERATIONS, AES_KEY_LENGTH)
         val factory = SecretKeyFactory.getInstance(KEY_DERIVATION_ALGORITHM)
@@ -106,6 +134,8 @@ class AuthConfig(storage: PersistedObject, private val logging: Logging) {
         val iv = cipher.iv
         val encryptedData = cipher.doFinal(keyBytes)
 
+        password.fill('0')
+        
         return iv + encryptedData
     }
 
@@ -114,7 +144,7 @@ class AuthConfig(storage: PersistedObject, private val logging: Logging) {
         val encryptedData = Base64.getDecoder().decode(_encryptedSecretKey)
         val seed = _keyDerivationSeed
 
-        val password = "mcp-auth-key-${System.getProperty("user.name")}-$seed".toCharArray()
+        val password = generateSecureKeyDerivationPassword(seed).toCharArray()
 
         val spec = PBEKeySpec(password, salt, PBKDF2_ITERATIONS, AES_KEY_LENGTH)
         val factory = SecretKeyFactory.getInstance(KEY_DERIVATION_ALGORITHM)
@@ -128,7 +158,11 @@ class AuthConfig(storage: PersistedObject, private val logging: Logging) {
         val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH * 8, iv)
         cipher.init(Cipher.DECRYPT_MODE, secretKey, gcmSpec)
 
-        return cipher.doFinal(encrypted)
+        val result = cipher.doFinal(encrypted)
+
+        password.fill('0')
+
+        return result
     }
 
     fun generateClientCredentials(name: String): ClientCredentials {
