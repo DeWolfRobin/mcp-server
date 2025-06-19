@@ -8,6 +8,7 @@ import burp.api.montoya.http.HttpMode
 import burp.api.montoya.http.HttpService
 import burp.api.montoya.http.message.HttpHeader
 import burp.api.montoya.http.message.requests.HttpRequest
+import burp.api.montoya.http.message.responses.HttpResponse
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
@@ -40,6 +41,23 @@ private fun truncateIfNeeded(serialized: String): String {
     } else {
         serialized
     }
+}
+
+@Serializable
+data class StructuredHttpResponse(
+    val statusLine: String,
+    val headers: Map<String, String>,
+    val body: String,
+)
+
+private fun formatHttpResponse(resp: HttpResponse): String {
+    val bodyText = resp.bodyToString()
+    val structured = StructuredHttpResponse(
+        statusLine = "${resp.httpVersion()} ${resp.statusCode()} ${resp.reasonPhrase()}",
+        headers = resp.headers().associate { it.name() to it.value() },
+        body = if (bodyText.length > 5000) bodyText.substring(0, 5000) + "... (truncated)" else bodyText,
+    )
+    return Json.encodeToString(structured)
 }
 
 /**
@@ -76,7 +94,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
         val request = HttpRequest.httpRequest(toMontoyaService(), fixedContent)
         val response = api.http().sendRequest(request)
 
-        val respString = response?.toString() ?: "<no response>"
+        val respString = response?.response()?.let { formatHttpResponse(it) } ?: "<no response>"
         HttpResponseCache.put(cacheKey, respString)
 
         respString
@@ -138,7 +156,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
         val response = api.http().sendRequest(request, HttpMode.HTTP_2)
 
-        val respString = response?.toString() ?: "<no response>"
+        val respString = response?.response()?.let { formatHttpResponse(it) } ?: "<no response>"
         HttpResponseCache.put(cacheKey, respString)
 
         respString

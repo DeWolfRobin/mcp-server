@@ -23,6 +23,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.decodeFromString
+import net.portswigger.mcp.tools.StructuredHttpResponse
 import net.portswigger.mcp.ServerState
 import net.portswigger.mcp.TestSseMcpClient
 import net.portswigger.mcp.config.McpConfig
@@ -157,7 +159,8 @@ class ToolsKtTest {
         @Test
         fun `http1 line endings should be normalized`() {
             val httpService = mockk<Http>()
-            val httpResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpRequestResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpResponse = mockk<burp.api.montoya.http.message.responses.HttpResponse>()
             val contentSlot = slot<String>()
 
             every { HttpRequest.httpRequest(any(), capture(contentSlot)) } answers {
@@ -167,8 +170,13 @@ class ToolsKtTest {
                 }
             }
             every { api.http() } returns httpService
-            every { httpResponse.toString() } returns "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nResponse body"
-            every { httpService.sendRequest(capture(capturedRequest)) } returns httpResponse
+            every { httpRequestResponse.response() } returns httpResponse
+            every { httpResponse.httpVersion() } returns "HTTP/1.1"
+            every { httpResponse.statusCode() } returns 200
+            every { httpResponse.reasonPhrase() } returns "OK"
+            every { httpResponse.headers() } returns listOf(HttpHeader.httpHeader("Content-Type", "text/plain"))
+            every { httpResponse.bodyToString() } returns "Response body"
+            every { httpService.sendRequest(capture(capturedRequest)) } returns httpRequestResponse
 
             runBlocking {
                 val result = client.callTool(
@@ -182,8 +190,12 @@ class ToolsKtTest {
 
                 delay(100)
                 val text = result.expectTextContent()
-                assertFalse(text.contains("Error"), 
+                assertFalse(text.contains("Error"),
                     "Expected success response but got error: $text")
+                val structured = Json.decodeFromString<StructuredHttpResponse>(text)
+                assertEquals("HTTP/1.1 200 OK", structured.statusLine)
+                assertEquals(mapOf("Content-Type" to "text/plain"), structured.headers)
+                assertEquals("Response body", structured.body)
             }
 
             verify(exactly = 1) { httpService.sendRequest(any<HttpRequest>()) }
@@ -222,16 +234,22 @@ class ToolsKtTest {
         @Test
         fun `http2 request should be formatted properly`() {
             val httpService = mockk<Http>()
-            val httpResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpRequestResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpResponse = mockk<burp.api.montoya.http.message.responses.HttpResponse>()
             val httpRequest = mockk<HttpRequest>()
             val requestSlot = slot<HttpRequest>()
             val headersSlot = slot<List<HttpHeader>>()
             val bodySlot = slot<String>()
 
             every { HttpRequest.http2Request(any(), capture(headersSlot), capture(bodySlot)) } returns httpRequest
-            every { httpResponse.toString() } returns "HTTP/2 200 OK\r\nContent-Type: text/plain\r\n\r\nResponse body"
             every { api.http() } returns httpService
-            every { httpService.sendRequest(capture(requestSlot), HttpMode.HTTP_2) } returns httpResponse
+            every { httpRequestResponse.response() } returns httpResponse
+            every { httpResponse.httpVersion() } returns "HTTP/2"
+            every { httpResponse.statusCode() } returns 200
+            every { httpResponse.reasonPhrase() } returns "OK"
+            every { httpResponse.headers() } returns listOf(HttpHeader.httpHeader("Content-Type", "text/plain"))
+            every { httpResponse.bodyToString() } returns "Response body"
+            every { httpService.sendRequest(capture(requestSlot), HttpMode.HTTP_2) } returns httpRequestResponse
 
             val pseudoHeaders = mapOf(
                 "authority" to "example.com", "scheme" to "https", "method" to "GET", ":path" to "/test"
@@ -255,8 +273,12 @@ class ToolsKtTest {
 
                 delay(100)
                 val text = result.expectTextContent()
-                assertFalse(text.contains("Error"), 
+                assertFalse(text.contains("Error"),
                     "Expected success response but got error: $text")
+                val structured = Json.decodeFromString<StructuredHttpResponse>(text)
+                assertEquals("HTTP/2 200 OK", structured.statusLine)
+                assertEquals(mapOf("Content-Type" to "text/plain"), structured.headers)
+                assertEquals("Response body", structured.body)
             }
 
             verify(exactly = 1) { HttpRequest.http2Request(any(), any(), any<String>()) }
@@ -307,14 +329,20 @@ class ToolsKtTest {
         @Test
         fun `http2 pseudo headers should be ordered correctly`() {
             val httpService = mockk<Http>()
-            val httpResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpRequestResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpResponse = mockk<burp.api.montoya.http.message.responses.HttpResponse>()
             val httpRequest = mockk<HttpRequest>()
             val headersSlot = slot<List<HttpHeader>>()
 
             every { HttpRequest.http2Request(any(), capture(headersSlot), any<String>()) } returns httpRequest
-            every { httpResponse.toString() } returns "HTTP/2 200 OK"
             every { api.http() } returns httpService
-            every { httpService.sendRequest(any(), HttpMode.HTTP_2) } returns httpResponse
+            every { httpRequestResponse.response() } returns httpResponse
+            every { httpResponse.httpVersion() } returns "HTTP/2"
+            every { httpResponse.statusCode() } returns 200
+            every { httpResponse.reasonPhrase() } returns "OK"
+            every { httpResponse.headers() } returns emptyList()
+            every { httpResponse.bodyToString() } returns ""
+            every { httpService.sendRequest(any(), HttpMode.HTTP_2) } returns httpRequestResponse
 
             val pseudoHeaders = mapOf(
                 "path" to "/test",
