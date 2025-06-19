@@ -18,7 +18,8 @@ import java.net.ServerSocket
 class McpServerIntegrationTest {
     private val client = TestSseMcpClient()
     private val api = mockk<MontoyaApi>(relaxed = true)
-    private val serverManager = KtorServerManager(api)
+    private val mockLogging = mockk<Logging>(relaxed = true)
+    private val serverManager = KtorServerManager(api, mockLogging)
     private val testPort = findAvailablePort()
     private val persistedObject = mockk<PersistedObject>()
     private var serverStarted = false
@@ -32,9 +33,9 @@ class McpServerIntegrationTest {
         every { persistedObject.setInteger(any(), any()) } returns Unit
     }
 
-    private val mockLogging = mockk<Logging>().apply {
-        every { logToError(any<String>()) } returns Unit
-        every { logToOutput(any<String>()) } returns Unit
+    init {
+        every { mockLogging.logToError(any<String>()) } returns Unit
+        every { mockLogging.logToOutput(any<String>()) } returns Unit
     }
 
     private val config = McpConfig(persistedObject, mockLogging)

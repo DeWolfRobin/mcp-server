@@ -1,6 +1,7 @@
 package net.portswigger.mcp.server
 
 import burp.api.montoya.MontoyaApi
+import burp.api.montoya.logging.Logging
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -21,7 +22,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class KtorServerManager(private val api: MontoyaApi) : ServerManager {
+class KtorServerManager(private val api: MontoyaApi, private val logging: Logging) : ServerManager {
 
     private var server: EmbeddedServer<*, *>? = null
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -69,24 +70,24 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
 
                         if (origin != null) {
                             if (!isValidOrigin(origin)) {
-                                api.logging().logToOutput("Blocked DNS rebinding attack from origin: $origin")
+                                logging.logToOutput("Blocked DNS rebinding attack from origin: $origin")
                                 call.respond(HttpStatusCode.Forbidden)
                                 return@intercept
                             }
                         } else if (isBrowserRequest(userAgent)) {
-                            api.logging().logToOutput("Blocked browser request without Origin header")
+                            logging.logToOutput("Blocked browser request without Origin header")
                             call.respond(HttpStatusCode.Forbidden)
                             return@intercept
                         }
 
                         if (host != null && !isValidHost(host, config.port)) {
-                            api.logging().logToOutput("Blocked DNS rebinding attack from host: $host")
+                            logging.logToOutput("Blocked DNS rebinding attack from host: $host")
                             call.respond(HttpStatusCode.Forbidden)
                             return@intercept
                         }
 
                         if (referer != null && !isValidReferer(referer)) {
-                            api.logging().logToOutput("Blocked suspicious request from referer: $referer")
+                            logging.logToOutput("Blocked suspicious request from referer: $referer")
                             call.respond(HttpStatusCode.Forbidden)
                             return@intercept
                         }
@@ -101,16 +102,16 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
                         mcpServer
                     }
 
-                    mcpServer.registerTools(api, config)
+                    mcpServer.registerTools(api, config, logging)
                 }.apply {
                     start(wait = false)
                 }
 
-                api.logging().logToOutput("Started MCP server on ${config.host}:${config.port}")
+                logging.logToOutput("Started MCP server on ${config.host}:${config.port}")
                 callback(ServerState.Running)
 
             } catch (e: Exception) {
-                api.logging().logToError(e)
+                logging.logToError(e)
                 callback(ServerState.Failed(e))
             }
         }
@@ -123,10 +124,10 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
             try {
                 server?.stop(1000, 5000)
                 server = null
-                api.logging().logToOutput("Stopped MCP server")
+                logging.logToOutput("Stopped MCP server")
                 callback(ServerState.Stopped)
             } catch (e: Exception) {
-                api.logging().logToError(e)
+                logging.logToError(e)
                 callback(ServerState.Failed(e))
             }
         }
