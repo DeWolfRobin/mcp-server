@@ -17,6 +17,7 @@ import net.portswigger.mcp.schema.toSerializableForm
 import net.portswigger.mcp.security.HistoryAccessSecurity
 import net.portswigger.mcp.security.HistoryAccessType
 import net.portswigger.mcp.security.HttpRequestSecurity
+import net.portswigger.mcp.tools.HttpResponseCache
 import java.awt.KeyboardFocusManager
 import java.util.regex.Pattern
 import javax.swing.JTextArea
@@ -66,10 +67,19 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
         val fixedContent = content.replace("\r", "").replace("\n", "\r\n")
 
+        val cacheKey = "http1|$targetHostname:$targetPort|$usesHttps|${fixedContent.trim()}"
+        HttpResponseCache.get(cacheKey)?.let { cached ->
+            api.logging().logToOutput("MCP returning cached HTTP/1.1 response")
+            return@mcpTool cached
+        }
+
         val request = HttpRequest.httpRequest(toMontoyaService(), fixedContent)
         val response = api.http().sendRequest(request)
 
-        response?.toString() ?: "<no response>"
+        val respString = response?.toString() ?: "<no response>"
+        HttpResponseCache.put(cacheKey, respString)
+
+        respString
     }
 
     mcpTool<SendHttp2Request>(
@@ -120,9 +130,18 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
         val headerList = (fixedPseudoHeaders + headers).map { HttpHeader.httpHeader(it.key.lowercase(), it.value) }
 
         val request = HttpRequest.http2Request(toMontoyaService(), headerList, requestBody)
+        val cacheKey = "http2|$targetHostname:$targetPort|$usesHttps|${http2RequestDisplay.trim()}"
+        HttpResponseCache.get(cacheKey)?.let { cached ->
+            api.logging().logToOutput("MCP returning cached HTTP/2 response")
+            return@mcpTool cached
+        }
+
         val response = api.http().sendRequest(request, HttpMode.HTTP_2)
 
-        response?.toString() ?: "<no response>"
+        val respString = response?.toString() ?: "<no response>"
+        HttpResponseCache.put(cacheKey, respString)
+
+        respString
     }
 
     mcpTool<CreateRepeaterTab>(
