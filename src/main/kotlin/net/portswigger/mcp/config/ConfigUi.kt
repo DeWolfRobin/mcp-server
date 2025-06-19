@@ -49,6 +49,7 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
     private lateinit var advancedOptionsPanel: AdvancedOptionsPanel
     private lateinit var autoApproveTargetsPanel: AutoApproveTargetsPanel
     private lateinit var installationPanel: InstallationPanel
+    private lateinit var logPanel: LogPanel
 
     private var toggleListener: ((Boolean) -> Unit)? = null
     private var suppressToggleEvents: Boolean = false
@@ -77,6 +78,8 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
             config = config, providers = providers, reinstallNotice = reinstallNotice, parentComponent = panel
         )
 
+        logPanel = LogPanel()
+
         setupConfigListeners()
     }
 
@@ -96,6 +99,10 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
 
         if (::autoApproveTargetsPanel.isInitialized) {
             autoApproveTargetsPanel.cleanup()
+        }
+
+        if (::logPanel.isInitialized) {
+            logPanel.cleanup()
         }
     }
 
@@ -206,6 +213,8 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
         rightPanelContent.add(createVerticalStrut(10))
 
         rightPanelContent.add(installationPanel)
+        rightPanelContent.add(createVerticalStrut(Design.Spacing.LG))
+        rightPanelContent.add(logPanel)
 
         val columnsPanel = ResponsiveColumnsPanel(leftPanel, rightPanel)
         panel.add(columnsPanel, BorderLayout.CENTER)

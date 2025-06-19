@@ -41,7 +41,8 @@ class ToolsKtTest {
     
     private val client = TestSseMcpClient()
     private val api = mockk<MontoyaApi>(relaxed = true)
-    private val serverManager = KtorServerManager(api)
+    private val mockLogging = mockk<Logging>(relaxed = true)
+    private val serverManager = KtorServerManager(api, mockLogging)
     private val testPort = findAvailablePort()
     private var serverStarted = false
     private val config: McpConfig
@@ -63,10 +64,8 @@ class ToolsKtTest {
             every { setString(any(), any()) } returns Unit
             every { setInteger(any(), any()) } returns Unit
         }
-        val mockLogging = mockk<Logging>().apply {
-            every { logToError(any<String>()) } returns Unit
-            every { logToOutput(any<String>()) } returns Unit
-        }
+        every { mockLogging.logToError(any<String>()) } returns Unit
+        every { mockLogging.logToOutput(any<String>()) } returns Unit
 
         config = McpConfig(persistedObject, mockLogging)
         

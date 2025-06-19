@@ -9,6 +9,7 @@ import burp.api.montoya.http.HttpService
 import burp.api.montoya.http.message.HttpHeader
 import burp.api.montoya.http.message.requests.HttpRequest
 import io.modelcontextprotocol.kotlin.sdk.server.Server
+import burp.api.montoya.logging.Logging
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,14 +23,18 @@ import java.util.regex.Pattern
 import javax.swing.JTextArea
 
 private suspend fun checkHistoryPermissionOrDeny(
-    accessType: HistoryAccessType, config: McpConfig, api: MontoyaApi, logMessage: String
+    accessType: HistoryAccessType,
+    config: McpConfig,
+    api: MontoyaApi,
+    logMessage: String,
+    logging: Logging
 ): Boolean {
     val allowed = HistoryAccessSecurity.checkHistoryAccessPermission(accessType, config)
     if (!allowed) {
-        api.logging().logToOutput("MCP $logMessage access denied")
+        logging.logToOutput("MCP $logMessage access denied")
         return false
     }
-    api.logging().logToOutput("MCP $logMessage access granted")
+    logging.logToOutput("MCP $logMessage access granted")
     return true
 }
 
@@ -41,18 +46,19 @@ private fun truncateIfNeeded(serialized: String): String {
     }
 }
 
-fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
+
+fun Server.registerTools(api: MontoyaApi, config: McpConfig, logging: Logging) {
 
     mcpTool<SendHttp1Request>("Issues an HTTP/1.1 request and returns the response.") {
         val allowed = runBlocking {
             HttpRequestSecurity.checkHttpRequestPermission(targetHostname, targetPort, config, content, api)
         }
         if (!allowed) {
-            api.logging().logToOutput("MCP HTTP request denied: $targetHostname:$targetPort")
+            logging.logToOutput("MCP HTTP request denied: $targetHostname:$targetPort")
             return@mcpTool "Send HTTP request denied by Burp Suite"
         }
 
-        api.logging().logToOutput("MCP HTTP/1.1 request: $targetHostname:$targetPort")
+        logging.logToOutput("MCP HTTP/1.1 request: $targetHostname:$targetPort")
 
         val fixedContent = content.replace("\r", "").replace("\n", "\r\n")
 
@@ -81,11 +87,11 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
             HttpRequestSecurity.checkHttpRequestPermission(targetHostname, targetPort, config, http2RequestDisplay, api)
         }
         if (!allowed) {
-            api.logging().logToOutput("MCP HTTP request denied: $targetHostname:$targetPort")
+            logging.logToOutput("MCP HTTP request denied: $targetHostname:$targetPort")
             return@mcpTool "Send HTTP request denied by Burp Suite"
         }
 
-        api.logging().logToOutput("MCP HTTP/2 request: $targetHostname:$targetPort")
+        logging.logToOutput("MCP HTTP/2 request: $targetHostname:$targetPort")
 
         val orderedPseudoHeaderNames = listOf(":scheme", ":method", ":path", ":authority")
 
@@ -162,7 +168,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
     mcpTool<SetProjectOptions>("Sets project-level configuration in JSON format. This will be merged with existing configuration. Make sure to export before doing this, so you know what the schema is. Make sure the JSON has a top level 'user_options' object!") {
         if (config.configEditingTooling) {
-            api.logging().logToOutput("Setting project-level configuration: $json")
+            logging.logToOutput("Setting project-level configuration: $json")
             api.burpSuite().importProjectOptionsFromJson(json)
 
             "Project configuration has been applied"
@@ -174,7 +180,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
     mcpTool<SetUserOptions>("Sets user-level configuration in JSON format. This will be merged with existing configuration. Make sure to export before doing this, so you know what the schema is. Make sure the JSON has a top level 'project_options' object!") {
         if (config.configEditingTooling) {
-            api.logging().logToOutput("Setting user-level configuration: $json")
+            logging.logToOutput("Setting user-level configuration: $json")
             api.burpSuite().importUserOptionsFromJson(json)
 
             "User configuration has been applied"
@@ -191,7 +197,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
     mcpPaginatedTool<GetProxyHttpHistory>("Displays items within the proxy HTTP history") {
         val allowed = runBlocking {
-            checkHistoryPermissionOrDeny(HistoryAccessType.HTTP_HISTORY, config, api, "HTTP history")
+            checkHistoryPermissionOrDeny(HistoryAccessType.HTTP_HISTORY, config, api, "HTTP history", logging)
         }
         if (!allowed) {
             return@mcpPaginatedTool sequenceOf("HTTP history access denied by Burp Suite")
@@ -202,7 +208,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
     mcpPaginatedTool<GetProxyHttpHistoryRegex>("Displays items matching a specified regex within the proxy HTTP history") {
         val allowed = runBlocking {
-            checkHistoryPermissionOrDeny(HistoryAccessType.HTTP_HISTORY, config, api, "HTTP history")
+            checkHistoryPermissionOrDeny(HistoryAccessType.HTTP_HISTORY, config, api, "HTTP history", logging)
         }
         if (!allowed) {
             return@mcpPaginatedTool sequenceOf("HTTP history access denied by Burp Suite")
@@ -215,7 +221,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
     mcpPaginatedTool<GetProxyWebsocketHistory>("Displays items within the proxy WebSocket history") {
         val allowed = runBlocking {
-            checkHistoryPermissionOrDeny(HistoryAccessType.WEBSOCKET_HISTORY, config, api, "WebSocket history")
+            checkHistoryPermissionOrDeny(HistoryAccessType.WEBSOCKET_HISTORY, config, api, "WebSocket history", logging)
         }
         if (!allowed) {
             return@mcpPaginatedTool sequenceOf("WebSocket history access denied by Burp Suite")
@@ -227,7 +233,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
     mcpPaginatedTool<GetProxyWebsocketHistoryRegex>("Displays items matching a specified regex within the proxy WebSocket history") {
         val allowed = runBlocking {
-            checkHistoryPermissionOrDeny(HistoryAccessType.WEBSOCKET_HISTORY, config, api, "WebSocket history")
+            checkHistoryPermissionOrDeny(HistoryAccessType.WEBSOCKET_HISTORY, config, api, "WebSocket history", logging)
         }
         if (!allowed) {
             return@mcpPaginatedTool sequenceOf("WebSocket history access denied by Burp Suite")
