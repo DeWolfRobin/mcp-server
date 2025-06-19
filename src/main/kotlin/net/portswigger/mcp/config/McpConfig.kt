@@ -16,6 +16,9 @@ class McpConfig(storage: PersistedObject, private val logging: Logging) {
     var requireHttpRequestApproval by storage.boolean(true)
     var requireHistoryAccessApproval by storage.boolean(true)
 
+    var activeTools by storage.string("")
+    var rateLimitPerMinute by storage.int(60)
+
     private var _alwaysAllowHttpHistory by storage.boolean(false)
     var alwaysAllowHttpHistory: Boolean
         get() = _alwaysAllowHttpHistory
@@ -74,6 +77,14 @@ class McpConfig(storage: PersistedObject, private val logging: Logging) {
             emptyList()
         } else {
             _autoApproveTargets.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        }
+    }
+
+    fun getActiveToolsList(): List<String> {
+        return if (activeTools.isBlank()) {
+            emptyList()
+        } else {
+            activeTools.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         }
     }
 

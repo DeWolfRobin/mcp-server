@@ -140,6 +140,9 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
     }
 
     mcpTool<GenerateRandomString>("Generates a random string of specified length and character set") {
+        if (length !in 1..128) {
+            return@mcpTool "Length must be between 1 and 128"
+        }
         api.utilities().randomUtils().randomString(length, characterSet)
     }
 

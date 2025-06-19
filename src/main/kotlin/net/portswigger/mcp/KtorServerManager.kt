@@ -17,6 +17,7 @@ import net.portswigger.mcp.ServerManager
 import net.portswigger.mcp.ServerState
 import net.portswigger.mcp.config.McpConfig
 import net.portswigger.mcp.tools.registerTools
+import net.portswigger.mcp.tools.ToolRegistry
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -100,6 +101,9 @@ class KtorServerManager(private val api: MontoyaApi) : ServerManager {
                     mcp {
                         mcpServer
                     }
+
+                    ToolRegistry.setAllowedTools(config.getActiveToolsList())
+                    ToolRegistry.maxCallsPerMinute = config.rateLimitPerMinute
 
                     mcpServer.registerTools(api, config)
                 }.apply {

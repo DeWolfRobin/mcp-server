@@ -6,9 +6,13 @@ import io.modelcontextprotocol.kotlin.sdk.TextContent
 import io.modelcontextprotocol.kotlin.sdk.Tool
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import kotlinx.serialization.InternalSerializationApi
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import net.portswigger.mcp.schema.asInputSchema
+import net.portswigger.mcp.tools.ToolRegistry
 import kotlin.experimental.ExperimentalTypeInference
 
 @OptIn(InternalSerializationApi::class)
@@ -18,24 +22,41 @@ inline fun <reified I : Any> Server.mcpTool(
 ) {
     val toolName = I::class.simpleName?.toLowerSnakeCase() ?: error("Couldn't find name for ${I::class}")
 
+    if (!ToolRegistry.isToolAllowed(toolName)) return
+
     addTool(
         name = toolName,
         description = description,
         inputSchema = I::class.asInputSchema(),
         handler = { request ->
+            if (!ToolRegistry.incrementCallCount(toolName)) {
+                return@addTool CallToolResult(
+                    content = listOf(TextContent("Rate limit exceeded")),
+                    isError = true,
+                    _meta = buildJsonObject { put("tool_response", true) }
+                )
+            }
+
             try {
+                val args = Json.decodeFromJsonElement(
+                    I::class.serializer(),
+                    request.arguments
+                )
                 CallToolResult(
-                    content = execute(
-                        Json.decodeFromJsonElement(
-                            I::class.serializer(),
-                            request.arguments
-                        )
-                    )
+                    content = execute(args),
+                    _meta = buildJsonObject { put("tool_response", true) }
+                )
+            } catch (_: SerializationException) {
+                CallToolResult(
+                    content = listOf(TextContent("Error: invalid parameters")),
+                    isError = true,
+                    _meta = buildJsonObject { put("tool_response", true) }
                 )
             } catch (e: Exception) {
                 CallToolResult(
                     content = listOf(TextContent("Error: ${e.message}")),
-                    isError = true
+                    isError = true,
+                    _meta = buildJsonObject { put("tool_response", true) }
                 )
             }
         }
@@ -116,30 +137,51 @@ inline fun Server.mcpTool(
     description: String,
     crossinline execute: () -> List<PromptMessageContent>
 ) {
+    if (!ToolRegistry.isToolAllowed(name)) return
+
     addTool(
         name = name,
         description = description,
         inputSchema = Tool.Input(),
         handler = {
+            if (!ToolRegistry.incrementCallCount(name)) {
+                return@addTool CallToolResult(
+                    content = listOf(TextContent("Rate limit exceeded")),
+                    isError = true,
+                    _meta = buildJsonObject { put("tool_response", true) }
+                )
+            }
+
             CallToolResult(
-                content = execute()
+                content = execute(),
+                _meta = buildJsonObject { put("tool_response", true) }
             )
         }
     )
 }
-
 inline fun Server.mcpTool(
     name: String,
     description: String,
     crossinline execute: () -> String
 ) {
+    if (!ToolRegistry.isToolAllowed(name)) return
+
     addTool(
         name = name,
         description = description,
         inputSchema = Tool.Input(),
         handler = {
+            if (!ToolRegistry.incrementCallCount(name)) {
+                return@addTool CallToolResult(
+                    content = listOf(TextContent("Rate limit exceeded")),
+                    isError = true,
+                    _meta = buildJsonObject { put("tool_response", true) }
+                )
+            }
+
             CallToolResult(
-                content = listOf(TextContent(execute()))
+                content = listOf(TextContent(execute())),
+                _meta = buildJsonObject { put("tool_response", true) }
             )
         }
     )
