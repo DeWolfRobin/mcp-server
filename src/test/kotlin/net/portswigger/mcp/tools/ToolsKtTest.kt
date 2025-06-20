@@ -12,6 +12,9 @@ import burp.api.montoya.logging.Logging
 import burp.api.montoya.persistence.PersistedObject
 import burp.api.montoya.proxy.Proxy
 import burp.api.montoya.proxy.ProxyHttpRequestResponse
+import burp.api.montoya.sitemap.SiteMap
+import burp.api.montoya.sitemap.SiteMapFilter
+import burp.api.montoya.scanner.audit.issues.AuditIssue
 import burp.api.montoya.utilities.Base64Utils
 import burp.api.montoya.utilities.RandomUtils
 import burp.api.montoya.utilities.URLUtils
@@ -29,6 +32,10 @@ import net.portswigger.mcp.ServerState
 import net.portswigger.mcp.TestSseMcpClient
 import net.portswigger.mcp.config.McpConfig
 import net.portswigger.mcp.schema.HttpRequestResponse
+import net.portswigger.mcp.schema.IssueDetails
+import net.portswigger.mcp.schema.AuditIssueSeverity
+import net.portswigger.mcp.schema.AuditIssueConfidence
+import net.portswigger.mcp.schema.AuditIssueDefinition
 import net.portswigger.mcp.schema.toSerializableForm
 import net.portswigger.mcp.server.KtorServerManager
 import org.junit.jupiter.api.AfterEach
@@ -780,6 +787,112 @@ class ToolsKtTest {
                 assertEquals("Reached end of items", result3.expectTextContent())
             }
         }
+
+        @Test
+        fun `get scanner issues for url should paginate properly`() {
+            val siteMap = mockk<burp.api.montoya.sitemap.SiteMap>()
+            val issue1 = mockk<burp.api.montoya.scanner.audit.issues.AuditIssue>()
+            val issue2 = mockk<burp.api.montoya.scanner.audit.issues.AuditIssue>()
+            val issue3 = mockk<burp.api.montoya.scanner.audit.issues.AuditIssue>()
+
+            every { api.siteMap() } returns siteMap
+            every { siteMap.issues(SiteMapFilter.prefixFilter("https://example.com")) } returns listOf(issue1, issue2, issue3)
+
+            mockkStatic("net.portswigger.mcp.schema.SerializationKt")
+
+            every { issue1.toSerializableForm() } returns IssueDetails(
+                name = "Issue1",
+                detail = null,
+                remediation = null,
+                httpService = null,
+                baseUrl = "https://example.com",
+                severity = AuditIssueSeverity.HIGH,
+                confidence = AuditIssueConfidence.CERTAIN,
+                requestResponses = emptyList(),
+                collaboratorInteractions = emptyList(),
+                definition = AuditIssueDefinition(
+                    id = "1",
+                    background = null,
+                    remediation = null,
+                    typeIndex = 0
+                )
+            )
+            every { issue2.toSerializableForm() } returns IssueDetails(
+                name = "Issue2",
+                detail = null,
+                remediation = null,
+                httpService = null,
+                baseUrl = "https://example.com",
+                severity = AuditIssueSeverity.MEDIUM,
+                confidence = AuditIssueConfidence.CERTAIN,
+                requestResponses = emptyList(),
+                collaboratorInteractions = emptyList(),
+                definition = AuditIssueDefinition(
+                    id = "2",
+                    background = null,
+                    remediation = null,
+                    typeIndex = 0
+                )
+            )
+            every { issue3.toSerializableForm() } returns IssueDetails(
+                name = "Issue3",
+                detail = null,
+                remediation = null,
+                httpService = null,
+                baseUrl = "https://example.com",
+                severity = AuditIssueSeverity.LOW,
+                confidence = AuditIssueConfidence.CERTAIN,
+                requestResponses = emptyList(),
+                collaboratorInteractions = emptyList(),
+                definition = AuditIssueDefinition(
+                    id = "3",
+                    background = null,
+                    remediation = null,
+                    typeIndex = 0
+                )
+            )
+
+            runBlocking {
+                val result1 = client.callTool(
+                    "get_scanner_issues_for_url", mapOf(
+                        "url" to "https://example.com",
+                        "count" to 2,
+                        "offset" to 0
+                    )
+                )
+
+                delay(100)
+                val text1 = result1.expectTextContent()
+                assertTrue(text1.contains("Issue1"))
+                assertTrue(text1.contains("Issue2"))
+                assertFalse(text1.contains("Issue3"))
+
+                val result2 = client.callTool(
+                    "get_scanner_issues_for_url", mapOf(
+                        "url" to "https://example.com",
+                        "count" to 2,
+                        "offset" to 2
+                    )
+                )
+
+                delay(100)
+                val text2 = result2.expectTextContent()
+                assertTrue(text2.contains("Issue3"))
+
+                val result3 = client.callTool(
+                    "get_scanner_issues_for_url", mapOf(
+                        "url" to "https://example.com",
+                        "count" to 2,
+                        "offset" to 3
+                    )
+                )
+
+                delay(100)
+                assertEquals("Reached end of items", result3.expectTextContent())
+            }
+
+            verify(exactly = 1) { siteMap.issues(SiteMapFilter.prefixFilter("https://example.com")) }
+        }
     }
     
     @Test
@@ -801,6 +914,7 @@ class ToolsKtTest {
         runBlocking {
             val tools = client.listTools()
             assertFalse(tools.any { it.name == "get_scanner_issues" })
+            assertFalse(tools.any { it.name == "get_scanner_issues_for_url" })
         }
         
         every { version.edition() } returns BurpSuiteEdition.PROFESSIONAL
@@ -823,6 +937,7 @@ class ToolsKtTest {
             
             val tools = client.listTools()
             assertTrue(tools.any { it.name == "get_scanner_issues" })
+            assertTrue(tools.any { it.name == "get_scanner_issues_for_url" })
         }
     }
 }

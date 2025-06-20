@@ -9,6 +9,7 @@ import burp.api.montoya.http.HttpService
 import burp.api.montoya.http.message.HttpHeader
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.http.message.responses.HttpResponse
+import burp.api.montoya.sitemap.SiteMapFilter
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
@@ -249,6 +250,11 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
         mcpPaginatedTool<GetScannerIssues>("Displays information about issues identified by the scanner") {
             api.siteMap().issues().asSequence().map { Json.encodeToString(it.toSerializableForm()) }
         }
+
+        mcpPaginatedTool<GetScannerIssuesForUrl>("Displays scanner issues for a specific URL") {
+            val filter = SiteMapFilter.prefixFilter(url)
+            api.siteMap().issues(filter).asSequence().map { Json.encodeToString(it.toSerializableForm()) }
+        }
     }
 
     mcpPaginatedTool<GetProxyHttpHistory>("Displays items within the proxy HTTP history") {
@@ -456,6 +462,13 @@ data class SetActiveEditorContents(
 
 @Serializable
 data class GetScannerIssues(
+    override val count: Int,
+    override val offset: Int
+) : Paginated
+
+@Serializable
+data class GetScannerIssuesForUrl(
+    val url: String,
     override val count: Int,
     override val offset: Int
 ) : Paginated
