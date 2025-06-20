@@ -252,8 +252,14 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
         }
 
         mcpPaginatedTool<GetScannerIssuesForUrl>("Displays scanner issues for a specific URL") {
-            val filter = SiteMapFilter.prefixFilter(url)
-            api.siteMap().issues(filter).asSequence().map { Json.encodeToString(it.toSerializableForm()) }
+            val issues = if (url.startsWith("http://") || url.startsWith("https://")) {
+                val filter = SiteMapFilter.prefixFilter(url)
+                api.siteMap().issues(filter)
+            } else {
+                api.siteMap().issues().filter { it.baseUrl().contains(url) }
+            }
+
+            issues.asSequence().map { Json.encodeToString(it.toSerializableForm()) }
         }
     }
 
