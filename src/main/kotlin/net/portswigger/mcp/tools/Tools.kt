@@ -8,6 +8,8 @@ import burp.api.montoya.http.HttpMode
 import burp.api.montoya.http.HttpService
 import burp.api.montoya.http.message.HttpHeader
 import burp.api.montoya.http.message.requests.HttpRequest
+import burp.api.montoya.http.message.responses.HttpResponse
+import burp.api.montoya.sitemap.SiteMapFilter
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
@@ -40,6 +42,23 @@ private fun truncateIfNeeded(serialized: String): String {
     } else {
         serialized
     }
+}
+
+@Serializable
+data class StructuredHttpResponse(
+    val statusLine: String,
+    val headers: Map<String, String>,
+    val body: String,
+)
+
+private fun formatHttpResponse(resp: HttpResponse): String {
+    val bodyText = resp.bodyToString()
+    val structured = StructuredHttpResponse(
+        statusLine = "${resp.httpVersion()} ${resp.statusCode()} ${resp.reasonPhrase()}",
+        headers = resp.headers().associate { it.name() to it.value() },
+        body = if (bodyText.length > 5000) bodyText.substring(0, 5000) + "... (truncated)" else bodyText,
+    )
+    return Json.encodeToString(structured)
 }
 
 /**
@@ -76,7 +95,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
         val request = HttpRequest.httpRequest(toMontoyaService(), fixedContent)
         val response = api.http().sendRequest(request)
 
-        val respString = response?.toString() ?: "<no response>"
+        val respString = response?.response()?.let { formatHttpResponse(it) } ?: "<no response>"
         HttpResponseCache.put(cacheKey, respString)
 
         respString
@@ -138,7 +157,7 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
         val response = api.http().sendRequest(request, HttpMode.HTTP_2)
 
-        val respString = response?.toString() ?: "<no response>"
+        val respString = response?.response()?.let { formatHttpResponse(it) } ?: "<no response>"
         HttpResponseCache.put(cacheKey, respString)
 
         respString
@@ -230,6 +249,17 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
     if (api.burpSuite().version().edition() == BurpSuiteEdition.PROFESSIONAL) {
         mcpPaginatedTool<GetScannerIssues>("Displays information about issues identified by the scanner") {
             api.siteMap().issues().asSequence().map { Json.encodeToString(it.toSerializableForm()) }
+        }
+
+        mcpPaginatedTool<GetScannerIssuesForUrl>("Displays scanner issues for a specific URL") {
+            val issues = if (url.startsWith("http://") || url.startsWith("https://")) {
+                val filter = SiteMapFilter.prefixFilter(url)
+                api.siteMap().issues(filter)
+            } else {
+                api.siteMap().issues().filter { it.baseUrl().contains(url) }
+            }
+
+            issues.asSequence().map { Json.encodeToString(it.toSerializableForm()) }
         }
     }
 
@@ -438,6 +468,13 @@ data class SetActiveEditorContents(
 
 @Serializable
 data class GetScannerIssues(
+    override val count: Int,
+    override val offset: Int
+) : Paginated
+
+@Serializable
+data class GetScannerIssuesForUrl(
+    val url: String,
     override val count: Int,
     override val offset: Int
 ) : Paginated

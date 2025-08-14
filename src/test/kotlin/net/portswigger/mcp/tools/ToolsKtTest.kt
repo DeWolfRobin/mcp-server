@@ -12,6 +12,9 @@ import burp.api.montoya.logging.Logging
 import burp.api.montoya.persistence.PersistedObject
 import burp.api.montoya.proxy.Proxy
 import burp.api.montoya.proxy.ProxyHttpRequestResponse
+import burp.api.montoya.sitemap.SiteMap
+import burp.api.montoya.sitemap.SiteMapFilter
+import burp.api.montoya.scanner.audit.issues.AuditIssue
 import burp.api.montoya.utilities.Base64Utils
 import burp.api.montoya.utilities.RandomUtils
 import burp.api.montoya.utilities.URLUtils
@@ -23,10 +26,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.decodeFromString
+import net.portswigger.mcp.tools.StructuredHttpResponse
 import net.portswigger.mcp.ServerState
 import net.portswigger.mcp.TestSseMcpClient
 import net.portswigger.mcp.config.McpConfig
 import net.portswigger.mcp.schema.HttpRequestResponse
+import net.portswigger.mcp.schema.IssueDetails
+import net.portswigger.mcp.schema.AuditIssueSeverity
+import net.portswigger.mcp.schema.AuditIssueConfidence
+import net.portswigger.mcp.schema.AuditIssueDefinition
 import net.portswigger.mcp.schema.toSerializableForm
 import net.portswigger.mcp.server.KtorServerManager
 import org.junit.jupiter.api.AfterEach
@@ -157,7 +166,8 @@ class ToolsKtTest {
         @Test
         fun `http1 line endings should be normalized`() {
             val httpService = mockk<Http>()
-            val httpResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpRequestResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpResponse = mockk<burp.api.montoya.http.message.responses.HttpResponse>()
             val contentSlot = slot<String>()
 
             every { HttpRequest.httpRequest(any(), capture(contentSlot)) } answers {
@@ -167,8 +177,13 @@ class ToolsKtTest {
                 }
             }
             every { api.http() } returns httpService
-            every { httpResponse.toString() } returns "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nResponse body"
-            every { httpService.sendRequest(capture(capturedRequest)) } returns httpResponse
+            every { httpRequestResponse.response() } returns httpResponse
+            every { httpResponse.httpVersion() } returns "HTTP/1.1"
+            every { httpResponse.statusCode() } returns 200
+            every { httpResponse.reasonPhrase() } returns "OK"
+            every { httpResponse.headers() } returns listOf(HttpHeader.httpHeader("Content-Type", "text/plain"))
+            every { httpResponse.bodyToString() } returns "Response body"
+            every { httpService.sendRequest(capture(capturedRequest)) } returns httpRequestResponse
 
             runBlocking {
                 val result = client.callTool(
@@ -182,8 +197,12 @@ class ToolsKtTest {
 
                 delay(100)
                 val text = result.expectTextContent()
-                assertFalse(text.contains("Error"), 
+                assertFalse(text.contains("Error"),
                     "Expected success response but got error: $text")
+                val structured = Json.decodeFromString<StructuredHttpResponse>(text)
+                assertEquals("HTTP/1.1 200 OK", structured.statusLine)
+                assertEquals(mapOf("Content-Type" to "text/plain"), structured.headers)
+                assertEquals("Response body", structured.body)
             }
 
             verify(exactly = 1) { httpService.sendRequest(any<HttpRequest>()) }
@@ -222,16 +241,22 @@ class ToolsKtTest {
         @Test
         fun `http2 request should be formatted properly`() {
             val httpService = mockk<Http>()
-            val httpResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpRequestResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpResponse = mockk<burp.api.montoya.http.message.responses.HttpResponse>()
             val httpRequest = mockk<HttpRequest>()
             val requestSlot = slot<HttpRequest>()
             val headersSlot = slot<List<HttpHeader>>()
             val bodySlot = slot<String>()
 
             every { HttpRequest.http2Request(any(), capture(headersSlot), capture(bodySlot)) } returns httpRequest
-            every { httpResponse.toString() } returns "HTTP/2 200 OK\r\nContent-Type: text/plain\r\n\r\nResponse body"
             every { api.http() } returns httpService
-            every { httpService.sendRequest(capture(requestSlot), HttpMode.HTTP_2) } returns httpResponse
+            every { httpRequestResponse.response() } returns httpResponse
+            every { httpResponse.httpVersion() } returns "HTTP/2"
+            every { httpResponse.statusCode() } returns 200
+            every { httpResponse.reasonPhrase() } returns "OK"
+            every { httpResponse.headers() } returns listOf(HttpHeader.httpHeader("Content-Type", "text/plain"))
+            every { httpResponse.bodyToString() } returns "Response body"
+            every { httpService.sendRequest(capture(requestSlot), HttpMode.HTTP_2) } returns httpRequestResponse
 
             val pseudoHeaders = mapOf(
                 "authority" to "example.com", "scheme" to "https", "method" to "GET", ":path" to "/test"
@@ -255,8 +280,12 @@ class ToolsKtTest {
 
                 delay(100)
                 val text = result.expectTextContent()
-                assertFalse(text.contains("Error"), 
+                assertFalse(text.contains("Error"),
                     "Expected success response but got error: $text")
+                val structured = Json.decodeFromString<StructuredHttpResponse>(text)
+                assertEquals("HTTP/2 200 OK", structured.statusLine)
+                assertEquals(mapOf("Content-Type" to "text/plain"), structured.headers)
+                assertEquals("Response body", structured.body)
             }
 
             verify(exactly = 1) { HttpRequest.http2Request(any(), any(), any<String>()) }
@@ -307,14 +336,20 @@ class ToolsKtTest {
         @Test
         fun `http2 pseudo headers should be ordered correctly`() {
             val httpService = mockk<Http>()
-            val httpResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpRequestResponse = mockk<burp.api.montoya.http.message.HttpRequestResponse>()
+            val httpResponse = mockk<burp.api.montoya.http.message.responses.HttpResponse>()
             val httpRequest = mockk<HttpRequest>()
             val headersSlot = slot<List<HttpHeader>>()
 
             every { HttpRequest.http2Request(any(), capture(headersSlot), any<String>()) } returns httpRequest
-            every { httpResponse.toString() } returns "HTTP/2 200 OK"
             every { api.http() } returns httpService
-            every { httpService.sendRequest(any(), HttpMode.HTTP_2) } returns httpResponse
+            every { httpRequestResponse.response() } returns httpResponse
+            every { httpResponse.httpVersion() } returns "HTTP/2"
+            every { httpResponse.statusCode() } returns 200
+            every { httpResponse.reasonPhrase() } returns "OK"
+            every { httpResponse.headers() } returns emptyList()
+            every { httpResponse.bodyToString() } returns ""
+            every { httpService.sendRequest(any(), HttpMode.HTTP_2) } returns httpRequestResponse
 
             val pseudoHeaders = mapOf(
                 "path" to "/test",
@@ -752,6 +787,112 @@ class ToolsKtTest {
                 assertEquals("Reached end of items", result3.expectTextContent())
             }
         }
+
+        @Test
+        fun `get scanner issues for url should paginate properly`() {
+            val siteMap = mockk<burp.api.montoya.sitemap.SiteMap>()
+            val issue1 = mockk<burp.api.montoya.scanner.audit.issues.AuditIssue>()
+            val issue2 = mockk<burp.api.montoya.scanner.audit.issues.AuditIssue>()
+            val issue3 = mockk<burp.api.montoya.scanner.audit.issues.AuditIssue>()
+
+            every { api.siteMap() } returns siteMap
+            every { siteMap.issues(SiteMapFilter.prefixFilter("https://example.com")) } returns listOf(issue1, issue2, issue3)
+
+            mockkStatic("net.portswigger.mcp.schema.SerializationKt")
+
+            every { issue1.toSerializableForm() } returns IssueDetails(
+                name = "Issue1",
+                detail = null,
+                remediation = null,
+                httpService = null,
+                baseUrl = "https://example.com",
+                severity = AuditIssueSeverity.HIGH,
+                confidence = AuditIssueConfidence.CERTAIN,
+                requestResponses = emptyList(),
+                collaboratorInteractions = emptyList(),
+                definition = AuditIssueDefinition(
+                    id = "1",
+                    background = null,
+                    remediation = null,
+                    typeIndex = 0
+                )
+            )
+            every { issue2.toSerializableForm() } returns IssueDetails(
+                name = "Issue2",
+                detail = null,
+                remediation = null,
+                httpService = null,
+                baseUrl = "https://example.com",
+                severity = AuditIssueSeverity.MEDIUM,
+                confidence = AuditIssueConfidence.CERTAIN,
+                requestResponses = emptyList(),
+                collaboratorInteractions = emptyList(),
+                definition = AuditIssueDefinition(
+                    id = "2",
+                    background = null,
+                    remediation = null,
+                    typeIndex = 0
+                )
+            )
+            every { issue3.toSerializableForm() } returns IssueDetails(
+                name = "Issue3",
+                detail = null,
+                remediation = null,
+                httpService = null,
+                baseUrl = "https://example.com",
+                severity = AuditIssueSeverity.LOW,
+                confidence = AuditIssueConfidence.CERTAIN,
+                requestResponses = emptyList(),
+                collaboratorInteractions = emptyList(),
+                definition = AuditIssueDefinition(
+                    id = "3",
+                    background = null,
+                    remediation = null,
+                    typeIndex = 0
+                )
+            )
+
+            runBlocking {
+                val result1 = client.callTool(
+                    "get_scanner_issues_for_url", mapOf(
+                        "url" to "https://example.com",
+                        "count" to 2,
+                        "offset" to 0
+                    )
+                )
+
+                delay(100)
+                val text1 = result1.expectTextContent()
+                assertTrue(text1.contains("Issue1"))
+                assertTrue(text1.contains("Issue2"))
+                assertFalse(text1.contains("Issue3"))
+
+                val result2 = client.callTool(
+                    "get_scanner_issues_for_url", mapOf(
+                        "url" to "https://example.com",
+                        "count" to 2,
+                        "offset" to 2
+                    )
+                )
+
+                delay(100)
+                val text2 = result2.expectTextContent()
+                assertTrue(text2.contains("Issue3"))
+
+                val result3 = client.callTool(
+                    "get_scanner_issues_for_url", mapOf(
+                        "url" to "https://example.com",
+                        "count" to 2,
+                        "offset" to 3
+                    )
+                )
+
+                delay(100)
+                assertEquals("Reached end of items", result3.expectTextContent())
+            }
+
+            verify(exactly = 1) { siteMap.issues(SiteMapFilter.prefixFilter("https://example.com")) }
+        }
     }
     
     @Test
@@ -773,6 +914,7 @@ class ToolsKtTest {
         runBlocking {
             val tools = client.listTools()
             assertFalse(tools.any { it.name == "get_scanner_issues" })
+            assertFalse(tools.any { it.name == "get_scanner_issues_for_url" })
         }
         
         every { version.edition() } returns BurpSuiteEdition.PROFESSIONAL
@@ -795,6 +937,7 @@ class ToolsKtTest {
             
             val tools = client.listTools()
             assertTrue(tools.any { it.name == "get_scanner_issues" })
+            assertTrue(tools.any { it.name == "get_scanner_issues_for_url" })
         }
     }
 }
