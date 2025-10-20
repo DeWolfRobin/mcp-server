@@ -17,6 +17,7 @@ import net.portswigger.mcp.schema.toSerializableForm
 import net.portswigger.mcp.security.HistoryAccessSecurity
 import net.portswigger.mcp.security.HistoryAccessType
 import net.portswigger.mcp.security.HttpRequestSecurity
+import net.portswigger.mcp.tools.HttpResponseCache
 import java.awt.KeyboardFocusManager
 import java.util.regex.Pattern
 import javax.swing.JTextArea
@@ -41,9 +42,19 @@ private fun truncateIfNeeded(serialized: String): String {
     }
 }
 
+/**
+ * Registers all built-in MCP tools with the SDK server.
+ *
+ * Each tool is exposed via [mcpTool] with a short textual description so the
+ * language model knows what capability it provides and which parameters are
+ * required. The descriptions below are intentionally explicit so the model can
+ * construct valid tool calls without additional guidance.
+ */
 fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
-    mcpTool<SendHttp1Request>("Issues an HTTP/1.1 request and returns the response.") {
+    mcpTool<SendHttp1Request>(
+        "Send a raw HTTP/1.1 request. Provide the request text in the `content` field and specify the target host, port and scheme."
+    ) {
         val allowed = runBlocking {
             HttpRequestSecurity.checkHttpRequestPermission(targetHostname, targetPort, config, content, api)
         }
@@ -56,13 +67,24 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
 
         val fixedContent = content.replace("\r", "").replace("\n", "\r\n")
 
+        val cacheKey = "http1|$targetHostname:$targetPort|$usesHttps|${fixedContent.trim()}"
+        HttpResponseCache.get(cacheKey)?.let { cached ->
+            api.logging().logToOutput("MCP returning cached HTTP/1.1 response")
+            return@mcpTool cached
+        }
+
         val request = HttpRequest.httpRequest(toMontoyaService(), fixedContent)
         val response = api.http().sendRequest(request)
 
-        response?.toString() ?: "<no response>"
+        val respString = response?.toString() ?: "<no response>"
+        HttpResponseCache.put(cacheKey, respString)
+
+        respString
     }
 
-    mcpTool<SendHttp2Request>("Issues an HTTP/2 request and returns the response. Do NOT pass headers to the body parameter.") {
+    mcpTool<SendHttp2Request>(
+        "Send an HTTP/2 request. Provide pseudo headers, normal headers and an optional body. The server returns the raw HTTP/2 response text."
+    ) {
         val http2RequestDisplay = buildString {
             pseudoHeaders.forEach { (key, value) ->
                 val headerName = if (key.startsWith(":")) key else ":$key"
@@ -108,51 +130,69 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
         val headerList = (fixedPseudoHeaders + headers).map { HttpHeader.httpHeader(it.key.lowercase(), it.value) }
 
         val request = HttpRequest.http2Request(toMontoyaService(), headerList, requestBody)
+        val cacheKey = "http2|$targetHostname:$targetPort|$usesHttps|${http2RequestDisplay.trim()}"
+        HttpResponseCache.get(cacheKey)?.let { cached ->
+            api.logging().logToOutput("MCP returning cached HTTP/2 response")
+            return@mcpTool cached
+        }
+
         val response = api.http().sendRequest(request, HttpMode.HTTP_2)
 
-        response?.toString() ?: "<no response>"
+        val respString = response?.toString() ?: "<no response>"
+        HttpResponseCache.put(cacheKey, respString)
+
+        respString
     }
 
-    mcpTool<CreateRepeaterTab>("Creates a new Repeater tab with the specified HTTP request and optional tab name. Make sure to use carriage returns appropriately.") {
+    mcpTool<CreateRepeaterTab>(
+        "Open the Burp Repeater tool with the provided HTTP request. Optionally specify `tabName` to label the new tab."
+    ) {
         val request = HttpRequest.httpRequest(toMontoyaService(), content)
         api.repeater().sendToRepeater(request, tabName)
     }
 
-    mcpTool<SendToIntruder>("Sends an HTTP request to Intruder with the specified HTTP request and optional tab name. Make sure to use carriage returns appropriately.") {
+    mcpTool<SendToIntruder>(
+        "Send the provided HTTP request to the Burp Intruder tool. Optionally name the tab using `tabName`."
+    ) {
         val request = HttpRequest.httpRequest(toMontoyaService(), content)
         api.intruder().sendToIntruder(request, tabName)
     }
 
-    mcpTool<UrlEncode>("URL encodes the input string") {
+    mcpTool<UrlEncode>("URL encode the provided `content` string") {
         api.utilities().urlUtils().encode(content)
     }
 
-    mcpTool<UrlDecode>("URL decodes the input string") {
+    mcpTool<UrlDecode>("URL decode the provided `content` string") {
         api.utilities().urlUtils().decode(content)
     }
 
-    mcpTool<Base64Encode>("Base64 encodes the input string") {
+    mcpTool<Base64Encode>("Base64 encode the provided `content` string") {
         api.utilities().base64Utils().encodeToString(content)
     }
 
-    mcpTool<Base64Decode>("Base64 decodes the input string") {
+    mcpTool<Base64Decode>("Base64 decode the provided `content` string") {
         api.utilities().base64Utils().decode(content).toString()
     }
 
-    mcpTool<GenerateRandomString>("Generates a random string of specified length and character set") {
+    mcpTool<GenerateRandomString>(
+        "Generate a random string using `characterSet` with the given `length` (1-128 characters)."
+    ) {
+        if (length !in 1..128) {
+            return@mcpTool "Length must be between 1 and 128"
+        }
         api.utilities().randomUtils().randomString(length, characterSet)
     }
 
     mcpTool(
         "output_project_options",
-        "Outputs current project-level configuration in JSON format. You can use this to determine the schema for available config options."
+        "Return Burp's project options as JSON. Useful for inspecting the available configuration schema."
     ) {
         api.burpSuite().exportProjectOptionsAsJson()
     }
 
     mcpTool(
         "output_user_options",
-        "Outputs current user-level configuration in JSON format. You can use this to determine the schema for available config options."
+        "Return Burp's user options as JSON so the model can see available configuration fields."
     ) {
         api.burpSuite().exportUserOptionsAsJson()
     }
@@ -160,7 +200,9 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
     val toolingDisabledMessage =
         "User has disabled configuration editing. They can enable it in the MCP tab in Burp by selecting 'Enable tools that can edit your config'"
 
-    mcpTool<SetProjectOptions>("Sets project-level configuration in JSON format. This will be merged with existing configuration. Make sure to export before doing this, so you know what the schema is. Make sure the JSON has a top level 'user_options' object!") {
+    mcpTool<SetProjectOptions>(
+        "Merge the given JSON into Burp's project options. Export options first to learn the correct schema."
+    ) {
         if (config.configEditingTooling) {
             api.logging().logToOutput("Setting project-level configuration: $json")
             api.burpSuite().importProjectOptionsFromJson(json)
@@ -172,7 +214,9 @@ fun Server.registerTools(api: MontoyaApi, config: McpConfig) {
     }
 
 
-    mcpTool<SetUserOptions>("Sets user-level configuration in JSON format. This will be merged with existing configuration. Make sure to export before doing this, so you know what the schema is. Make sure the JSON has a top level 'project_options' object!") {
+    mcpTool<SetUserOptions>(
+        "Merge the given JSON into Burp's user options. Export options first to learn the correct schema."
+    ) {
         if (config.configEditingTooling) {
             api.logging().logToOutput("Setting user-level configuration: $json")
             api.burpSuite().importUserOptionsFromJson(json)
@@ -331,47 +375,96 @@ data class SendToIntruder(
 ) : HttpServiceParams
 
 @Serializable
-data class UrlEncode(val content: String)
+data class UrlEncode(
+    /** String to encode */
+    val content: String
+)
 
 @Serializable
-data class UrlDecode(val content: String)
+data class UrlDecode(
+    /** Percent-encoded string */
+    val content: String
+)
 
 @Serializable
-data class Base64Encode(val content: String)
+data class Base64Encode(
+    /** Input string to encode as base64 */
+    val content: String
+)
 
 @Serializable
-data class Base64Decode(val content: String)
+data class Base64Decode(
+    /** Base64 text to decode */
+    val content: String
+)
 
 @Serializable
-data class GenerateRandomString(val length: Int, val characterSet: String)
+data class GenerateRandomString(
+    /** Desired length between 1 and 128 */
+    val length: Int,
+    /** Characters allowed in the generated output */
+    val characterSet: String
+)
 
 @Serializable
-data class SetProjectOptions(val json: String)
+data class SetProjectOptions(
+    /** JSON payload representing project options */
+    val json: String
+)
 
 @Serializable
-data class SetUserOptions(val json: String)
+data class SetUserOptions(
+    /** JSON payload representing user options */
+    val json: String
+)
 
 @Serializable
-data class SetTaskExecutionEngineState(val running: Boolean)
+data class SetTaskExecutionEngineState(
+    /** true to unpause Burp's task execution engine, false to pause */
+    val running: Boolean
+)
 
 @Serializable
-data class SetProxyInterceptState(val intercepting: Boolean)
+data class SetProxyInterceptState(
+    /** true to enable proxy intercept, false to disable */
+    val intercepting: Boolean
+)
 
 @Serializable
-data class SetActiveEditorContents(val text: String)
+data class SetActiveEditorContents(
+    /** Text that should replace the user's current message editor contents */
+    val text: String
+)
 
 @Serializable
-data class GetScannerIssues(override val count: Int, override val offset: Int) : Paginated
+data class GetScannerIssues(
+    override val count: Int,
+    override val offset: Int
+) : Paginated
 
 @Serializable
-data class GetProxyHttpHistory(override val count: Int, override val offset: Int) : Paginated
+data class GetProxyHttpHistory(
+    override val count: Int,
+    override val offset: Int
+) : Paginated
 
 @Serializable
-data class GetProxyHttpHistoryRegex(val regex: String, override val count: Int, override val offset: Int) : Paginated
+data class GetProxyHttpHistoryRegex(
+    val regex: String,
+    override val count: Int,
+    override val offset: Int
+) : Paginated
 
 @Serializable
-data class GetProxyWebsocketHistory(override val count: Int, override val offset: Int) : Paginated
+data class GetProxyWebsocketHistory(
+    override val count: Int,
+    override val offset: Int
+) : Paginated
 
 @Serializable
-data class GetProxyWebsocketHistoryRegex(val regex: String, override val count: Int, override val offset: Int) :
-    Paginated
+data class GetProxyWebsocketHistoryRegex(
+    /** Regex pattern applied to each WebSocket message in history */
+    val regex: String,
+    override val count: Int,
+    override val offset: Int
+) : Paginated
